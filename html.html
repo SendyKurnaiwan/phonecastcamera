@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Remote Camera Stream</title>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin: 0 auto; }
+        video { width: 100%; max-width: 400px; border: 2px solid #333; }
+        .container { display: flex; flex-direction: column; gap: 20px; }
+        .controls { background: #f5f5f5; padding: 15px; border-radius: 8px; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; }
+        #viewerSection { display: none; }
+        #streamerSection { display: none; }
+    </style>
+</head>
+<body>
+    <h1>📱 Remote Camera Streamer 🌐</h1>
+    
+    <div class="controls">
+        <h3>Choose Your Role:</h3>
+        <button onclick="showStreamer()">I'm the Phone (Streamer)</button>
+        <button onclick="showViewer()">I'm the Laptop (Viewer)</button>
+    </div>
+    
+    <!-- Streamer Section (Phone) -->
+    <div id="streamerSection" class="container">
+        <h2>Phone Setup</h2>
+        <video id="localVideo" autoplay muted playsinline></video>
+        
+        <div>
+            <button onclick="startStreaming()">Start Camera Stream</button>
+            <button onclick="stopStreaming()" style="background: #dc3545;">Stop Stream</button>
+        </div>
+        
+        <div>
+            <h4>Share this ID with viewer:</h4>
+            <input type="text" id="streamerId" readonly style="width: 300px; padding: 8px;">
+            <button onclick="copyStreamerId()">Copy ID</button>
+        </div>
+    </div>
+    
+    <!-- Viewer Section (Laptop) -->
+    <div id="viewerSection" class="container">
+        <h2>Laptop Viewer</h2>
+        <video id="remoteVideo" autoplay playsinline></video>
+        
+        <div>
+            <input type="text" id="streamerIdInput" placeholder="Enter Phone's Stream ID" style="padding: 8px; width: 250px;">
+            <button onclick="connectToStreamer()">Connect to Phone</button>
+        </div>
+        
+        <p id="status">Enter the Stream ID from the phone</p>
+    </div>
+    
+    <script>// Configuration using PeerJS cloud servers
+const config = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+};
+
+let peer;
+let localStream;
+let currentCall;
+
+// Show streamer UI
+function showStreamer() {
+    document.getElementById('streamerSection').style.display = 'block';
+    document.getElementById('viewerSection').style.display = 'none';
+    initStreamer();
+}
+
+// Show viewer UI
+function showViewer() {
+    document.getElementById('viewerSection').style.display = 'block';
+    document.getElementById('streamerSection').style.display = 'none';
+    initViewer();
+}
+
+// Initialize streamer (phone)
+async function initStreamer() {
+    // Generate unique ID
+    const streamId = 'streamer-' + Math.random().toString(36).substr(2, 9);
+    
+    // Initialize Peer
+    peer = new Peer(streamId, {
+        host: '0.peerjs.com',
+        port: 443,
+        path: '/',
+        secure: true,
+        config: config
+    });
+    
+    peer.on('open', (id) => {
+        document.getElementById('streamerId').value = id;
+        console.log('Streamer ID:', id);
+    });
+    
+    // Handle incoming connections (viewers)
+    peer.on('call', (call) => {
+        if (localStream) {
+            call.answer(localStream); // Send our video stream
+            setupCall(call);
+        }
+    });
+    
+    peer.on('error', (err) => {
+        console.error('Peer error:', err);
+    });
+}
+
+// Initialize viewer (laptop)
+function initViewer() {
+    // Generate viewer ID
+    const viewerId = 'viewer-' + Math.random().toString(36).substr(2, 9);
+    
+    peer = new Peer(viewerId, {
+        host: '0.peerjs.com',
+        port: 443,
+        path: '/',
+        secure: true,
+        config: config
+    });
+    
+    peer.on('open', (id) => {
+        console.log('Viewer ID:', id);
+    });
+    
+    peer.on('error', (err) => {
+        console.error('Peer error:', err);
+    });
+}
+
+// Start camera on phone
+async function startStreaming() {
+    try {
+        const constraints = {
+            video: {
+                facingMode: 'environment',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        };
+        
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        document.getElementById('localVideo').srcObject = localStream;
+        console.log('Camera streaming started');
+    } catch (err) {
+        console.error('Camera error:', err);
+        alert('Could not access camera: ' + err.message);
+    }
+}
+
+// Stop streaming
+function stopStreaming() {
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+        document.getElementById('localVideo').srcObject = null;
+    }
+    
+    if (currentCall) {
+        currentCall.close();
+        currentCall = null;
+    }
+}
+
+// Connect viewer to streamer
+async function connectToStreamer() {
+    const streamerId = document.getElementById('streamerIdInput').value.trim();
+    if (!streamerId) {
+        alert('Please enter a Stream ID');
+        return;
+    }
+    
+    try {
+        // Get local media (optional, could be empty)
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+            video: false, 
+            audio: false 
+        }).catch(() => null);
+        
+        // Call the streamer
+        const call = peer.call(streamerId, mediaStream || null);
+        setupCall(call);
+        
+        document.getElementById('status').textContent = 'Connecting...';
+        
+    } catch (err) {
+        console.error('Connection error:', err);
+        document.getElementById('status').textContent = 'Connection failed';
+    }
+}
+
+// Handle call setup
+function setupCall(call) {
+    currentCall = call;
+    
+    call.on('stream', (remoteStream) => {
+        // Display the remote video stream
+        document.getElementById('remoteVideo').srcObject = remoteStream;
+        document.getElementById('status').textContent = 'Connected!';
+        console.log('Stream received');
+    });
+    
+    call.on('close', () => {
+        document.getElementById('remoteVideo').srcObject = null;
+        document.getElementById('status').textContent = 'Disconnected';
+        currentCall = null;
+    });
+    
+    call.on('error', (err) => {
+        console.error('Call error:', err);
+        document.getElementById('status').textContent = 'Error: ' + err.message;
+    });
+}
+
+// Copy streamer ID to clipboard
+function copyStreamerId() {
+    const streamerId = document.getElementById('streamerId');
+    streamerId.select();
+    document.execCommand('copy');
+    alert('Stream ID copied! Share this with the viewer.');
+}
+
+// Initialize on page load
+window.addEventListener('load', () => {
+    // Auto-detect device type (basic)
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+        showStreamer();
+    } else {
+        showViewer();
+    }
+});</script>
+</body>
+</html>
